@@ -12,7 +12,7 @@ fi
 
 LIBTOOLIZE=libtoolize
 SYSNAME=`uname`
-if [ "$SYSNAME" = "Darwin" ] ; then
+if [ "x$SYSNAME" = "xDarwin" ] ; then
   LIBTOOLIZE=glibtoolize
 fi
 aclocal -I m4 && \

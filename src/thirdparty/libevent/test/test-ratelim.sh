@@ -2,7 +2,7 @@
 
 FAILED=no
 
-if test "$TEST_OUTPUT_FILE" = ""
+if test "x$TEST_OUTPUT_FILE" = "x"
 then
 	TEST_OUTPUT_FILE=/dev/null
 fi

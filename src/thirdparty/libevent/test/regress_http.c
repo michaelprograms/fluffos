@@ -64,17 +64,9 @@
 #include "log-internal.h"
 #include "http-internal.h"
 #include "regress.h"
-#include "regress_http.h"
-#include "regress_ws.h"
 #include "regress_testutils.h"
 
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
-
-#if EV_WINDOWS
-#define SKIP_UNDER_WINDOWS TT_SKIP
-#else
-#define SKIP_UNDER_WINDOWS 0
-#endif
 
 /* set if a test needs to call loopexit on a base */
 static struct event_base *exit_base;
@@ -168,7 +160,7 @@ https_bev(struct event_base *base, void *arg)
 static struct bufferevent *
 https_mbedtls_bev(struct event_base *base, void *arg)
 {
-	mbedtls_dyncontext *ssl = bufferevent_mbedtls_dyncontext_new(get_mbedtls_config(MBEDTLS_SSL_IS_SERVER));
+	mbedtls_ssl_context *ssl = mbedtls_ssl_new(get_mbedtls_config(MBEDTLS_SSL_IS_SERVER));
 	return bufferevent_mbedtls_socket_new(
 		base, -1, ssl, BUFFEREVENT_SSL_ACCEPTING,
 		BEV_OPT_CLOSE_ON_FREE);
@@ -225,11 +217,10 @@ http_setup_gencb(ev_uint16_t *pport, struct event_base *base, int mask,
 	evhttp_set_cb(myhttp, "/largedelay", http_large_delay_cb, base);
 	evhttp_set_cb(myhttp, "/badrequest", http_badreq_cb, base);
 	evhttp_set_cb(myhttp, "/oncomplete", http_on_complete_cb, base);
-	evhttp_set_cb(myhttp, "/ws", http_on_ws_cb, base);
 	evhttp_set_cb(myhttp, "/", http_dispatcher_cb, base);
 	return (myhttp);
 }
-struct evhttp *
+static struct evhttp *
 http_setup(ev_uint16_t *pport, struct event_base *base, int mask)
 { return http_setup_gencb(pport, base, mask, NULL, NULL); }
 
@@ -237,7 +228,7 @@ http_setup(ev_uint16_t *pport, struct event_base *base, int mask)
 #define NI_MAXSERV 1024
 #endif
 
-evutil_socket_t
+static evutil_socket_t
 http_connect(const char *address, ev_uint16_t port)
 {
 	/* Stupid code for connecting */
@@ -352,7 +343,7 @@ http_readcb(struct bufferevent *bev, void *arg)
 	}
 }
 
-void
+static void
 http_writecb(struct bufferevent *bev, void *arg)
 {
 	if (evbuffer_get_length(bufferevent_get_output(bev)) == 0) {
@@ -534,7 +525,7 @@ http_chunked_input_cb(struct evhttp_request *req, void *arg)
 	evbuffer_free(buf);
 }
 
-struct bufferevent *
+static struct bufferevent *
 create_bev(struct event_base *base, evutil_socket_t fd, int ssl_mask, int flags_)
 {
 	int flags = BEV_OPT_DEFER_CALLBACKS | flags_;
@@ -558,7 +549,7 @@ create_bev(struct event_base *base, evutil_socket_t fd, int ssl_mask, int flags_
 #endif
 	} else if (ssl_mask & HTTP_MBEDTLS) {
 #ifdef EVENT__HAVE_MBEDTLS
-		mbedtls_dyncontext *ssl = bufferevent_mbedtls_dyncontext_new(get_mbedtls_config(MBEDTLS_SSL_IS_CLIENT));
+		mbedtls_ssl_context *ssl = mbedtls_ssl_new(get_mbedtls_config(MBEDTLS_SSL_IS_CLIENT));
 		if (ssl_mask & HTTP_SSL_FILTER) {
 			struct bufferevent *underlying =
 			bufferevent_socket_new(base, fd, flags);
@@ -965,8 +956,7 @@ http_custom_cb(struct evhttp_request *req, void *arg)
 	int empty = evhttp_find_header(evhttp_request_get_input_headers(req), "Empty") != NULL;
 
 	/* Expecting a CUSTOM request */
-	uint32_t command = evhttp_request_get_command(req);
-	if (command != EVHTTP_REQ_CUSTOM) {
+	if (evhttp_request_get_command(req) != EVHTTP_REQ_CUSTOM) {
 		fprintf(stdout, "FAILED (custom type)\n");
 		exit(1);
 	}
@@ -1679,25 +1669,24 @@ static struct evhttp_connection **
 http_fill_backlog(struct event_base *base, int port)
 {
 #define BACKLOG_SIZE 256
-		struct evhttp_connection **evcons = calloc(BACKLOG_SIZE + 1, sizeof(*evcons));
+		struct evhttp_connection **evcon = malloc(sizeof(*evcon) * (BACKLOG_SIZE + 1));
 		int i;
 
 		for (i = 0; i < BACKLOG_SIZE; ++i) {
 			struct evhttp_request *req;
 
-			evcons[i] = evhttp_connection_base_new(base, NULL, "127.0.0.1", port);
-			tt_assert(evcons[i]);
-			evhttp_connection_set_timeout(evcons[i], 5);
+			evcon[i] = evhttp_connection_base_new(base, NULL, "127.0.0.1", port);
+			tt_assert(evcon[i]);
+			evhttp_connection_set_timeout(evcon[i], 5);
 
 			req = evhttp_request_new(http_request_never_call, NULL);
 			tt_assert(req);
-			tt_int_op(evhttp_make_request(evcons[i], req, EVHTTP_REQ_GET, "/delay"), !=, -1);
+			tt_int_op(evhttp_make_request(evcon[i], req, EVHTTP_REQ_GET, "/delay"), !=, -1);
 		}
-		evcons[i] = NULL;
+		evcon[i] = NULL;
 
-		return evcons;
+		return evcon;
  end:
-		http_free_evcons(evcons);
 		fprintf(stderr, "Couldn't fill the backlog");
 		return NULL;
 }
@@ -1778,10 +1767,7 @@ http_cancel_test(void *arg)
 	}
 
 	if (type & SERVER_TIMEOUT)
-	{
 		evcons = http_fill_backlog(base_to_fill, port);
-		tt_assert(evcons);
-	}
 
 	evcon = evhttp_connection_base_new(
 		data->base, dns_base,
@@ -1830,10 +1816,7 @@ http_cancel_test(void *arg)
 
 	http_free_evcons(evcons);
 	if (type & SERVER_TIMEOUT)
-	{
 		evcons = http_fill_backlog(base_to_fill, port);
-		tt_assert(evcons);
-	}
 
 	req = http_cancel_test_bad_request_new(type, data->base);
 	if (!req)
@@ -1853,10 +1836,7 @@ http_cancel_test(void *arg)
 
 	http_free_evcons(evcons);
 	if (type & SERVER_TIMEOUT)
-	{
 		evcons = http_fill_backlog(base_to_fill, port);
-		tt_assert(evcons);
-	}
 
 	req = http_cancel_test_bad_request_new(type, data->base);
 	if (!req)
@@ -2258,8 +2238,7 @@ static int evhttp_bind_unixsocket(struct evhttp *httpd, const char *path)
 	if (stat(path, &st) == 0 && S_ISSOCK(st.st_mode))
 		unlink(path);
 
-	fd = evutil_socket_(AF_UNIX,
-	    EVUTIL_SOCK_CLOEXEC | EVUTIL_SOCK_NONBLOCK | SOCK_STREAM, 0);
+	fd = socket(AF_UNIX, SOCK_CLOEXEC | SOCK_NONBLOCK | SOCK_STREAM, 0);
 	if (fd == -1)
 		return -1;
 
@@ -2290,23 +2269,17 @@ static int evhttp_bind_unixsocket(struct evhttp *httpd, const char *path)
 static void http_unix_socket_test(void *arg)
 {
 	struct basic_test_data *data = arg;
-	struct evhttp_uri *uri = NULL;
+	struct evhttp_uri *uri;
 	struct evhttp_connection *evcon = NULL;
 	struct evhttp_request *req;
-	struct evhttp *myhttp;
-	char tmp_sock_path[512];
-	char uri_loc[1024];
 
-	// Avoid overlap with parallel runs
-	evutil_snprintf(tmp_sock_path, sizeof(tmp_sock_path), "/tmp/eventtmp.%i.sock", getpid());
-	evutil_snprintf(uri_loc, sizeof(uri_loc), "http://unix:%s:/?arg=val", tmp_sock_path);
+	struct evhttp *myhttp = evhttp_new(data->base);
 
-	myhttp = evhttp_new(data->base);
-	tt_assert(!evhttp_bind_unixsocket(myhttp, tmp_sock_path));
+	tt_assert(!evhttp_bind_unixsocket(myhttp, "foo"));
 
 	evhttp_set_cb(myhttp, "/", http_dispatcher_cb, data->base);
 
-	uri = evhttp_uri_parse_with_flags(uri_loc, EVHTTP_URI_UNIX_SOCKET);
+	uri = evhttp_uri_parse_with_flags("http://unix:./foo:/?arg=val", EVHTTP_URI_UNIX_SOCKET);
 	tt_assert(uri);
 
 	evcon = evhttp_connection_base_bufferevent_unix_new(data->base, NULL, evhttp_uri_get_unixsocket(uri));
@@ -2334,10 +2307,6 @@ static void http_unix_socket_test(void *arg)
 		evhttp_free(myhttp);
 	if (uri)
 		evhttp_uri_free(uri);
-
-	/* Does mkstemp() succeed? */
-	if (!strstr(tmp_sock_path, "XXXXXX"))
-		unlink(tmp_sock_path);
 }
 #endif
 
@@ -3067,11 +3036,9 @@ http_parse_uri_test(void *arg)
 	BAD("http://www.example.com:hihi/");
 	BAD("://www.example.com/");
 
-#ifndef _WIN32
 	UNI("http://unix:/tmp/foobar/:/foo");
 	UNI("http://user:pass@unix:/tmp/foobar/:/foo");
 	UNI("http://unix:a:");
-#endif
 
 	/* bad URIs: joining */
 	uri = evhttp_uri_new();
@@ -3616,7 +3583,7 @@ http_incomplete_test_(struct basic_test_data *data, int use_timeout, int ssl)
 	tt_assert(fd != EVUTIL_INVALID_SOCKET);
 
 	/* Stupid thing to send a request */
-	bev = create_bev(data->base, fd, ssl, BEV_OPT_CLOSE_ON_FREE);
+	bev = create_bev(data->base, fd, ssl, 0);
 	bufferevent_setcb(bev,
 	    http_incomplete_readcb, http_incomplete_writecb,
 	    http_incomplete_errorcb, use_timeout ? NULL : &fd);
@@ -4008,7 +3975,7 @@ http_stream_out_test_impl(void *arg, int ssl)
 	test_ok = 0;
 	exit_base = data->base;
 
-	bev = create_bev(data->base, -1, ssl, BEV_OPT_CLOSE_ON_FREE);
+	bev = create_bev(data->base, -1, ssl, 0);
 	evcon = evhttp_connection_base_bufferevent_new(
 		data->base, NULL, bev, "127.0.0.1", port);
 	tt_assert(evcon);
@@ -4208,7 +4175,7 @@ http_connection_fail_test_impl(void *arg, int ssl)
 	/* auto detect a port */
 	evhttp_free(http);
 
-	bev = create_bev(data->base, -1, ssl, BEV_OPT_CLOSE_ON_FREE);
+	bev = create_bev(data->base, -1, ssl, 0);
 	/* Pick an unroutable address. This administratively scoped multicast
 	 * address should do when working with TCP. */
 	evcon = evhttp_connection_base_bufferevent_new(
@@ -4280,7 +4247,7 @@ http_simple_test_impl(void *arg, int ssl, int dirty, const char *uri)
 	exit_base = data->base;
 	test_ok = 0;
 
-	bev = create_bev(data->base, -1, ssl, BEV_OPT_CLOSE_ON_FREE);
+	bev = create_bev(data->base, -1, ssl, 0);
 #ifdef EVENT__HAVE_OPENSSL
 	bufferevent_openssl_set_allow_dirty_shutdown(bev, dirty);
 #endif
@@ -4312,97 +4279,6 @@ static void http_simple_test(void *arg)
 { http_simple_test_impl(arg, 0, 0, "/test"); }
 static void http_simple_nonconformant_test(void *arg)
 { http_simple_test_impl(arg, 0, 0, "/test nonconformant"); }
-
-static int
-https_bind_ssl_bevcb(struct evhttp *http, ev_uint16_t port, ev_uint16_t *pport, int mask)
-{
-	int _port;
-	struct evhttp_bound_socket *sock = NULL;
-	sock = evhttp_bind_socket_with_handle(http, "127.0.0.1", port);
-	if (!sock) {
-		event_errx(1, "Couldn't open web port");
-		return -1;
-	}
-
-#ifdef EVENT__HAVE_OPENSSL
-	if (mask & HTTP_OPENSSL) {
-		init_ssl();
-		evhttp_bound_set_bevcb(sock, https_bev, NULL);
-	}
-#endif
-#ifdef EVENT__HAVE_MBEDTLS
-	if (mask & HTTP_MBEDTLS) {
-		evhttp_bound_set_bevcb(sock, https_mbedtls_bev, NULL);
-	}
-#endif
-
-	_port = regress_get_socket_port(evhttp_bound_socket_get_fd(sock));
-	if (_port < 0)
-		return -1;
-
-	if (pport)
-		*pport = (ev_uint16_t)_port;
-
-	return 0;
-}
-static void
-https_per_socket_bevcb_impl(void *arg, ev_uint16_t http_port, ev_uint16_t https_port, int mask)
-{
-	struct bufferevent *bev;
-	struct basic_test_data *data = arg;
-	struct evhttp_connection *evcon = NULL;
-	struct evhttp *http = NULL;
-	ev_uint16_t new_https_port = 0;
-	struct evhttp_request *req = NULL;
-
-	http = evhttp_new(data->base);
-	tt_assert(http);
-
-	evhttp_bind_socket_with_handle(http, "127.0.0.1", http_port);
-
-	tt_assert(https_bind_ssl_bevcb(http, https_port, &new_https_port, mask) == 0);
-
-	evhttp_set_gencb(http, http_basic_cb, http);
-
-	bev = create_bev(data->base, -1, mask, BEV_OPT_CLOSE_ON_FREE);
-
-#ifdef EVENT__HAVE_OPENSSL
-	bufferevent_openssl_set_allow_dirty_shutdown(bev, 1);
-#endif
-#ifdef EVENT__HAVE_MBEDTLS
-	bufferevent_mbedtls_set_allow_dirty_shutdown(bev, 1);
-#endif
-
-	evcon = evhttp_connection_base_bufferevent_new(data->base, NULL, bev, "127.0.0.1", new_https_port);
-	tt_assert(evcon);
-
-	evhttp_connection_set_timeout(evcon, 1);
-	/* make sure to use the same address that is used by http */
-	evhttp_connection_set_local_address(evcon, "127.0.0.1");
-
-	req = evhttp_request_new(http_request_done, (void *) BASIC_REQUEST_BODY);
-	tt_assert(req);
-
-	evhttp_add_header(evhttp_request_get_output_headers(req), "Host", "somehost");
-
-	if (evhttp_make_request(evcon, req, EVHTTP_REQ_GET, "/test") == -1) {
-		evhttp_request_free(req);
-		TT_GRIPE(("make_request_failed"));
-		goto end;
-	}
-
-	exit_base = data->base;
-	event_base_dispatch(data->base);
-
-end:
-	if (evcon)
-		evhttp_connection_free(evcon);
-
-	if (http)
-		evhttp_free(http);
-}
-static void https_per_socket_bevcb(void *arg, int ssl)
-{ https_per_socket_bevcb_impl(arg, 0, 0, ssl); }
 
 static void
 http_connection_retry_test_basic(void *arg, const char *addr, struct evdns_base *dns_base, int ssl)
@@ -5209,7 +5085,7 @@ http_write_during_read_test_impl(void *arg, int ssl)
 
 	fd = http_connect("127.0.0.1", port);
 	tt_assert(fd != EVUTIL_INVALID_SOCKET);
-	bev = create_bev(data->base, fd, ssl, BEV_OPT_CLOSE_ON_FREE);
+	bev = create_bev(data->base, fd, ssl, 0);
 	bufferevent_setcb(bev, NULL, NULL, NULL, data->base);
 	bufferevent_disable(bev, EV_READ);
 
@@ -5816,7 +5692,6 @@ end:
 #define HTTP_N(title, name, test_opts, arg) \
 	{ #title, http_##name##_test, TT_ISOLATED|test_opts, &basic_setup, HTTP_CAST_ARG(arg) }
 #define HTTP(name) HTTP_N(name, name, 0, NULL)
-#define HTTP_OPT(name, opt) HTTP_N(name, name, opt, NULL)
 #define HTTPS(name) \
 	{ "https_openssl_" #name, https_##name##_test, TT_ISOLATED, &basic_setup, NULL }
 #define HTTPS_MBEDTLS(name) \
@@ -5853,8 +5728,6 @@ static void https_connection_test(void *arg)
 { http_connection_test_(arg, 0, "127.0.0.1", NULL, 0, AF_UNSPEC, HTTP_OPENSSL); }
 static void https_persist_connection_test(void *arg)
 { http_connection_test_(arg, 1, "127.0.0.1", NULL, 0, AF_UNSPEC, HTTP_OPENSSL); }
-static void https_per_socket_bevcb_test(void *arg)
-{ https_per_socket_bevcb_impl(arg, 0, 0, HTTP_OPENSSL); }
 #endif
 
 #ifdef EVENT__HAVE_MBEDTLS
@@ -5888,8 +5761,6 @@ static void https_mbedtls_connection_test(void *arg)
 { http_connection_test_(arg, 0, "127.0.0.1", NULL, 0, AF_UNSPEC, HTTP_MBEDTLS); }
 static void https_mbedtls_persist_connection_test(void *arg)
 { http_connection_test_(arg, 1, "127.0.0.1", NULL, 0, AF_UNSPEC, HTTP_MBEDTLS); }
-static void https_mbedtls_per_socket_bevcb_test(void *arg)
-{ https_per_socket_bevcb_impl(arg, 0, 0, HTTP_MBEDTLS); }
 #endif
 
 struct testcase_t http_testcases[] = {
@@ -5951,7 +5822,6 @@ struct testcase_t http_testcases[] = {
 	HTTP(terminate_chunked),
 	HTTP(terminate_chunked_oneshot),
 	HTTP(on_complete),
-	HTTP(ws),
 
 	HTTP(highport),
 	HTTP(dispatcher),
@@ -5969,7 +5839,7 @@ struct testcase_t http_testcases[] = {
 	{ "connection_retry_conn_address", http_connection_retry_conn_address_test,
 	  TT_ISOLATED|TT_OFF_BY_DEFAULT, &basic_setup, NULL },
 
-	HTTP_OPT(data_length_constraints, SKIP_UNDER_WINDOWS|TT_RETRIABLE),
+	HTTP(data_length_constraints),
 	HTTP(read_on_write_error),
 	HTTP(non_lingering_close),
 	HTTP(lingering_close),
@@ -5988,7 +5858,7 @@ struct testcase_t http_testcases[] = {
 	HTTP(request_extra_body),
 
 	HTTP(newreqcb),
-	HTTP_OPT(max_connections, SKIP_UNDER_WINDOWS),
+	HTTP(max_connections),
 
 	HTTP(timeout_read_client),
 	HTTP(timeout_read_server),
@@ -6010,7 +5880,6 @@ struct testcase_t http_testcases[] = {
 	HTTPS(write_during_read),
 	HTTPS(connection),
 	HTTPS(persist_connection),
-	HTTPS(per_socket_bevcb),
 #endif
 
 #ifdef EVENT__HAVE_MBEDTLS
@@ -6030,7 +5899,6 @@ struct testcase_t http_testcases[] = {
 	HTTPS_MBEDTLS(write_during_read),
 	HTTPS_MBEDTLS(connection),
 	HTTPS_MBEDTLS(persist_connection),
-	HTTPS_MBEDTLS(per_socket_bevcb),
 #endif
 
 	END_OF_TESTCASES

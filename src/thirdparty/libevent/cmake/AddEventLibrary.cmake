@@ -1,5 +1,4 @@
 include(CMakeParseArguments)
-include(GNUInstallDirs)
 
 set(LIBEVENT_SHARED_LIBRARIES "")
 set(LIBEVENT_STATIC_LIBRARIES "")
@@ -12,10 +11,10 @@ macro(set_event_shared_lib_flags LIB_NAME)
 endmacro()
 
 macro(generate_pkgconfig LIB_NAME)
-    set(prefix      "${CMAKE_INSTALL_PREFIX}")
-    set(exec_prefix "\${prefix}")
-    set(libdir      "\${prefix}/${CMAKE_INSTALL_LIBDIR}")
-    set(includedir  "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
+    set(prefix      ${CMAKE_INSTALL_PREFIX})
+    set(exec_prefix ${CMAKE_INSTALL_PREFIX})
+    set(libdir      ${CMAKE_INSTALL_PREFIX}/lib)
+    set(includedir  ${CMAKE_INSTALL_PREFIX}/include)
 
     set(VERSION ${EVENT_ABI_LIBVERSION})
 
@@ -24,16 +23,21 @@ macro(generate_pkgconfig LIB_NAME)
         set(LIBS "${LIBS} -l${LIB}")
     endforeach()
 
+    set(OPENSSL_LIBS "")
+    foreach(LIB ${OPENSSL_LIBRARIES})
+        set(OPENSSL_LIBS "${OPENSSL_LIBS} -l${LIB}")
+    endforeach()
+
     configure_file("lib${LIB_NAME}.pc.in" "lib${LIB_NAME}.pc" @ONLY)
     install(
         FILES "${CMAKE_CURRENT_BINARY_DIR}/lib${LIB_NAME}.pc"
-        DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
+        DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/pkgconfig"
     )
 endmacro()
 
 # LIB_NAME maybe event_core, event_extra, event_openssl, event_pthreads or event.
 # Targets whose LIB_NAME is not 'event' should be exported and installed.
-macro(export_install_target TYPE LIB_NAME)
+macro(export_install_target TYPE LIB_NAME OUTER_INCLUDES)
     if("${LIB_NAME}" STREQUAL "event")
         install(TARGETS "${LIB_NAME}_${TYPE}"
             LIBRARY DESTINATION "lib" COMPONENT lib
@@ -53,6 +57,7 @@ macro(export_install_target TYPE LIB_NAME)
             PUBLIC  "$<INSTALL_INTERFACE:include>"
                     "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
                     "$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>"
+                    ${OUTER_INCS}
         )
         set_target_properties("${LIB_NAME}_${TYPE}" PROPERTIES EXPORT_NAME ${PURE_NAME})
         export(TARGETS "${LIB_NAME}_${TYPE}"
@@ -76,7 +81,8 @@ endmacro()
 # - EVENT_ABI_LIBVERSION_REVISION
 # - EVENT_ABI_LIBVERSION_AGE
 # - EVENT_PACKAGE_RELEASE
-# - LIB_PLATFORM
+# - CMAKE_THREAD_LIBS_INIT LIB_PLATFORM
+# - OPENSSL_LIBRARIES
 # - EVENT_SHARED_FLAGS
 # - EVENT_LIBRARY_STATIC
 # - EVENT_LIBRARY_SHARED
@@ -88,10 +94,13 @@ macro(add_event_library LIB_NAME)
     cmake_parse_arguments(LIB
         "" # Options
         "VERSION" # One val
-        "SOURCES;LIBRARIES;INNER_LIBRARIES" # Multi val
+        "SOURCES;LIBRARIES;INNER_LIBRARIES;OUTER_INCLUDES" # Multi val
         ${ARGN}
     )
 
+    if ("${LIB_OUTER_INCLUDES}" STREQUAL "")
+        set(LIB_OUTER_INCLUDES NONE)
+    endif()
     set(ADD_EVENT_LIBRARY_INTERFACE)
     set(INNER_LIBRARIES)
 
@@ -105,11 +114,12 @@ macro(add_event_library LIB_NAME)
             set(INNER_LIBRARIES "${LIB_INNER_LIBRARIES}_static")
         endif()
         target_link_libraries("${LIB_NAME}_static"
+            ${CMAKE_THREAD_LIBS_INIT}
             ${LIB_PLATFORM}
             ${INNER_LIBRARIES}
             ${LIB_LIBRARIES})
 
-        export_install_target(static "${LIB_NAME}")
+        export_install_target(static "${LIB_NAME}" "${LIB_OUTER_INCLUDES}")
 
         set(ADD_EVENT_LIBRARY_INTERFACE "${LIB_NAME}_static")
     endif()
@@ -121,6 +131,7 @@ macro(add_event_library LIB_NAME)
             set(INNER_LIBRARIES "${LIB_INNER_LIBRARIES}_shared")
         endif()
         target_link_libraries("${LIB_NAME}_shared"
+            ${CMAKE_THREAD_LIBS_INIT}
             ${LIB_PLATFORM}
             ${INNER_LIBRARIES}
             ${LIB_LIBRARIES})
@@ -140,7 +151,7 @@ macro(add_event_library LIB_NAME)
             set_target_properties(
                 "${LIB_NAME}_shared" PROPERTIES
                 OUTPUT_NAME "${LIB_NAME}-${EVENT_PACKAGE_RELEASE}.${CURRENT_MINUS_AGE}"
-                INSTALL_NAME_DIR "${CMAKE_INSTALL_LIBDIR}"
+                INSTALL_NAME_DIR "${CMAKE_INSTALL_PREFIX}/lib"
                 LINK_FLAGS "-compatibility_version ${COMPATIBILITY_VERSION} -current_version ${COMPATIBILITY_VERSION}.${EVENT_ABI_LIBVERSION_REVISION}")
         else()
             math(EXPR CURRENT_MINUS_AGE "${EVENT_ABI_LIBVERSION_CURRENT}-${EVENT_ABI_LIBVERSION_AGE}")
@@ -148,7 +159,8 @@ macro(add_event_library LIB_NAME)
                 "${LIB_NAME}_shared" PROPERTIES
                 OUTPUT_NAME "${LIB_NAME}-${EVENT_PACKAGE_RELEASE}"
                 VERSION "${CURRENT_MINUS_AGE}.${EVENT_ABI_LIBVERSION_AGE}.${EVENT_ABI_LIBVERSION_REVISION}"
-                SOVERSION "${CURRENT_MINUS_AGE}")
+                SOVERSION "${CURRENT_MINUS_AGE}"
+                INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
         endif()
 
         if (NOT WIN32)
@@ -163,7 +175,7 @@ macro(add_event_library LIB_NAME)
                 WORKING_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
         endif()
 
-        export_install_target(shared "${LIB_NAME}")
+        export_install_target(shared "${LIB_NAME}" "${LIB_OUTER_INCLUDES}")
 
         set(ADD_EVENT_LIBRARY_INTERFACE "${LIB_NAME}_shared")
 

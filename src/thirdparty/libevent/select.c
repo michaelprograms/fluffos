@@ -119,8 +119,7 @@ select_init(struct event_base *base)
 		return (NULL);
 	}
 
-	if (sigfd_init_(base) < 0)
-		evsig_init_(base);
+	evsig_init_(base);
 
 	evutil_weakrand_seed_(&base->weakrand_seed, 0);
 

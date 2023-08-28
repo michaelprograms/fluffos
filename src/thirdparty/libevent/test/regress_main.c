@@ -144,34 +144,27 @@ regress_make_tmpfile(const void *data, size_t datalen, char **filename_out)
 		return (-1);
 	if (write(fd, data, datalen) != (int)datalen) {
 		close(fd);
-		unlink(tmpfilename);
 		return (-1);
 	}
 	lseek(fd, 0, SEEK_SET);
-	*filename_out = strdup(tmpfilename);
+	/* remove it from the file system */
+	unlink(tmpfilename);
 	return (fd);
 #else
 	/* XXXX actually delete the file later */
-	WCHAR tmpfilepath[MAX_PATH];
-	WCHAR tmpfilelongpath[MAX_PATH];
-	WCHAR tmpfilewideame[MAX_PATH];
+	char tmpfilepath[MAX_PATH];
 	char tmpfilename[MAX_PATH];
 	DWORD r, written;
 	int tries = 16;
 	HANDLE h;
-	r = GetTempPathW(MAX_PATH, tmpfilepath);
-	if (r > MAX_PATH || r == 0)
-		return (-1);
-	r = GetLongPathNameW(tmpfilepath, tmpfilelongpath, MAX_PATH);
+	r = GetTempPathA(MAX_PATH, tmpfilepath);
 	if (r > MAX_PATH || r == 0)
 		return (-1);
 	for (; tries > 0; --tries) {
-		r = GetTempFileNameW(tmpfilelongpath, L"LIBEVENT", 0, tmpfilewideame);
-		if (r == 0) {
-			int err = GetLastError();
+		r = GetTempFileNameA(tmpfilepath, "LIBEVENT", 0, tmpfilename);
+		if (r == 0)
 			return (-1);
-		}
-		h = CreateFileW(tmpfilewideame, GENERIC_READ | GENERIC_WRITE,
+		h = CreateFileA(tmpfilename, GENERIC_READ|GENERIC_WRITE,
 		    0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 		if (h != INVALID_HANDLE_VALUE)
 			break;
@@ -179,9 +172,6 @@ regress_make_tmpfile(const void *data, size_t datalen, char **filename_out)
 	if (tries == 0)
 		return (-1);
 	written = 0;
-	WideCharToMultiByte(
-		CP_ACP, 0, tmpfilewideame, MAX_PATH, tmpfilename,
-		MAX_PATH, NULL, NULL);
 	*filename_out = strdup(tmpfilename);
 	WriteFile(h, data, (DWORD)datalen, &written, NULL);
 	/* Closing the fd returned by this function will indeed close h. */
