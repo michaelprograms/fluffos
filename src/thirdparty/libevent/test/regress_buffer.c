@@ -441,7 +441,7 @@ test_evbuffer_pullup_with_empty(void *ptr)
 	buf = evbuffer_new();
 	evbuffer_validate(buf);
 	tt_int_op(evbuffer_get_length(buf), ==, 0);
-	tt_assert(evbuffer_pullup(buf, -1) == NULL);
+	tt_int_op(evbuffer_pullup(buf, -1), ==, NULL);
 
 	evbuffer_free(buf);
 	buf = evbuffer_new();
@@ -1161,7 +1161,8 @@ test_evbuffer_add_file(void *ptr)
 		view_from_offset = 1;
 	}
 	if (strstr(impl, "sendfile")) {
-		/* If sendfile is set, we try to use a sendfile style backend. */
+		/* If sendfile is set, we try to use a sendfile/splice style
+		 * backend. */
 		flags = EVBUF_FS_DISABLE_MMAP;
 		want_cansendfile = 1;
 		want_ismapping = 0;

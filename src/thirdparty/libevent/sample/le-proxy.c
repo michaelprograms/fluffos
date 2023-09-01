@@ -22,7 +22,6 @@
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <signal.h>
 #endif
 
 #include <event2/bufferevent_ssl.h>
@@ -218,17 +217,10 @@ main(int argc, char **argv)
 	struct evconnlistener *listener;
 
 #ifdef _WIN32
-	{
-		WORD wVersionRequested;
-		WSADATA wsaData;
-		wVersionRequested = MAKEWORD(2, 2);
-		(void) WSAStartup(wVersionRequested, &wsaData);
-	}
-#else
-	if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
-		perror("signal()");
-		return 1;
-	}
+	WORD wVersionRequested;
+	WSADATA wsaData;
+	wVersionRequested = MAKEWORD(2, 2);
+	(void) WSAStartup(wVersionRequested, &wsaData);
 #endif
 
 	if (argc < 3)

@@ -593,7 +593,7 @@ evrpc_pool_add_connection(struct evrpc_pool *pool,
 	 * unless a timeout was specifically set for a connection,
 	 * the connection inherits the timeout from the pool.
 	 */
-	if (!(connection->flags & EVHTTP_CON_TIMEOUT_ADJUSTED))
+	if (!evutil_timerisset(&connection->timeout))
 		evhttp_connection_set_timeout(connection, pool->timeout);
 
 	/*

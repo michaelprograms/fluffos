@@ -1,37 +1,7 @@
 dnl ######################################################################
 dnl OpenSSL support
 AC_DEFUN([LIBEVENT_OPENSSL], [
-
-m4_ifndef([PKG_PROG_PKG_CONFIG], [AC_MSG_ERROR([PKG_PROG_PKG_CONFIG not found. Please install pkg-config and re-run autogen.sh])])
-
-PKG_PROG_PKG_CONFIG([0.15.0])
-
-case "$host_os" in
-    darwin*)
-    dnl when compiling for Darwin, attempt to find OpenSSL using brew.
-    dnl We append the location given by brew to PKG_CONFIG_PATH path
-    dnl and then export it, so that it can be used in detection below.
-    AC_CHECK_PROG([BREW],brew, brew)
-    if test x$BREW = xbrew; then
-        openssl_prefix=$($BREW --prefix openssl 2>/dev/null)
-        if test x$openssl_prefix != x; then
-            OPENSSL_LIBS=`$PKG_CONFIG --libs openssl 2>/dev/null`
-            case "$OPENSSL_LIBS" in
-             dnl only if openssl is not in PKG_CONFIG_PATH already
-             '')
-                if test x$PKG_CONFIG_PATH != x; then
-                    PKG_CONFIG_PATH="$PKG_CONFIG_PATH:"
-                fi
-                OPENSSL_PKG_CONFIG="$openssl_prefix/lib/pkgconfig"
-                PKG_CONFIG_PATH="$PKG_CONFIG_PATH$OPENSSL_PKG_CONFIG"
-                export PKG_CONFIG_PATH
-                AC_MSG_NOTICE([PKG_CONFIG_PATH has been set to $PKG_CONFIG_PATH (added openssl from brew)])
-                ;;
-            esac
-        fi
-    fi
-    ;;
-esac
+AC_REQUIRE([NTP_PKG_CONFIG])dnl
 
 case "$enable_openssl" in
  yes)
@@ -57,7 +27,7 @@ case "$enable_openssl" in
 	LIBS=""
 	OPENSSL_LIBS=""
 	for lib in crypto eay32; do
-		dnl clear cache
+		# clear cache
 		unset ac_cv_search_SSL_new
 		AC_SEARCH_LIBS([SSL_new], [ssl ssl32],
 		    [have_openssl=yes
@@ -77,15 +47,15 @@ case "$enable_openssl" in
     AC_SUBST(OPENSSL_LIBS)
     case "$have_openssl" in
      yes)  AC_DEFINE(HAVE_OPENSSL, 1, [Define if the system has openssl]) ;;
-     *) AC_MSG_ERROR([OpenSSL could not be found. You should add the directory \
-     containing 'openssl.pc' to the 'PKG_CONFIG_PATH' environment variable, set \
-     'CFLAGS' and 'LDFLAGS' directly, or use '--disable-openssl' to disable \
-     support for OpenSSL encryption])
+     *) AC_MSG_ERROR([openssl is a must but can not be found. You should add the \
+directory containing `openssl.pc' to the `PKG_CONFIG_PATH' environment variable, \
+or set `CFLAGS' and `LDFLAGS' directly for openssl, or use `--disable-openssl' \
+to disable support for openssl encryption])
 	;;
     esac
     ;;
 esac
 
-dnl check if we have and should use OpenSSL
+# check if we have and should use openssl
 AM_CONDITIONAL(OPENSSL, [test "$enable_openssl" != "no" && test "$have_openssl" = "yes"])
 ])

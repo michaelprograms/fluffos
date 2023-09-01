@@ -20,12 +20,12 @@ macro(generate_pkgconfig LIB_NAME)
 
     set(LIBS         "")
     foreach (LIB ${LIB_PLATFORM})
-        set(LIBS "${LIBS} -l${LIB}")
+        set(LIBS "${LIBS} -L${LIB}")
     endforeach()
 
     set(OPENSSL_LIBS "")
     foreach(LIB ${OPENSSL_LIBRARIES})
-        set(OPENSSL_LIBS "${OPENSSL_LIBS} -l${LIB}")
+        set(OPENSSL_LIBS "${OPENSSL_LIBS} -L${LIB}")
     endforeach()
 
     configure_file("lib${LIB_NAME}.pc.in" "lib${LIB_NAME}.pc" @ONLY)
@@ -102,7 +102,6 @@ macro(add_event_library LIB_NAME)
         set(LIB_OUTER_INCLUDES NONE)
     endif()
     set(ADD_EVENT_LIBRARY_INTERFACE)
-    set(INNER_LIBRARIES)
 
     if (${EVENT_LIBRARY_STATIC})
         add_library("${LIB_NAME}_static" STATIC ${LIB_SOURCES})

@@ -28,7 +28,7 @@
 
 /** @file event2/buffer.h
 
-  @brief Functions for buffering data for network sending or receiving.
+  Functions for buffering data for network sending or receiving.
 
   An evbuffer can be used for preparing data before sending it to
   the network or conversely for reading data from the network.
@@ -158,30 +158,6 @@ struct evbuffer *evbuffer_new(void);
 EVENT2_EXPORT_SYMBOL
 void evbuffer_free(struct evbuffer *buf);
 
-
-/**
-  Set maximum read buffer size
-
-  Default is 4096 and it works fine most of time, so before increasing the
-  default check carefully, since this has some negative effects (like memory
-  fragmentation and unfair resource distribution, i.e. some events will make
-  less progress than others).
-
-  @param buf pointer to the evbuffer
-  @param max buffer size
-  @return 0 on success, -1 on failure (if max > INT_MAX).
- */
-EVENT2_EXPORT_SYMBOL
-int evbuffer_set_max_read(struct evbuffer *buf, size_t max);
-/**
-  Get maximum read buffer size
-
-  @param buf pointer to the evbuffer
-  @return current maximum buffer read
- */
-EVENT2_EXPORT_SYMBOL
-size_t evbuffer_get_max_read(struct evbuffer *buf);
-
 /**
    Enable locking on an evbuffer so that it can safely be used by multiple
    threads at the same time.
@@ -231,7 +207,8 @@ void evbuffer_unlock(struct evbuffer *buf);
 
 /** Change the flags that are set for an evbuffer by adding more.
  *
- * @param buf the evbuffer that the callback is watching.
+ * @param buffer the evbuffer that the callback is watching.
+ * @param cb the callback whose status we want to change.
  * @param flags One or more EVBUFFER_FLAG_* options
  * @return 0 on success, -1 on failure.
  */
@@ -239,7 +216,8 @@ EVENT2_EXPORT_SYMBOL
 int evbuffer_set_flags(struct evbuffer *buf, ev_uint64_t flags);
 /** Change the flags that are set for an evbuffer by removing some.
  *
- * @param buf the evbuffer that the callback is watching.
+ * @param buffer the evbuffer that the callback is watching.
+ * @param cb the callback whose status we want to change.
  * @param flags One or more EVBUFFER_FLAG_* options
  * @return 0 on success, -1 on failure.
  */
@@ -552,9 +530,10 @@ int evbuffer_add_file(struct evbuffer *outbuf, int fd, ev_off_t offset,
 /**
   An evbuffer_file_segment holds a reference to a range of a file --
   possibly the whole file! -- for use in writing from an evbuffer to a
-  socket.  It could be implemented with mmap or sendfile, or (if all else
-  fails) by just pulling all the data into RAM. A single evbuffer_file_segment
-  can be added more than once, and to more than one evbuffer.
+  socket.  It could be implemented with mmap, sendfile, splice, or (if all
+  else fails) by just pulling all the data into RAM.  A single
+  evbuffer_file_segment can be added more than once, and to more than one
+  evbuffer.
  */
 struct evbuffer_file_segment;
 
@@ -571,7 +550,7 @@ struct evbuffer_file_segment;
 #define EVBUF_FS_DISABLE_MMAP     0x02
 /**
    Flag for creating evbuffer_file_segment: Disable direct fd-to-fd
-   implementations (sendfile).
+   implementations (including sendfile and splice).
 
    You might want to use this option if data needs to be taken from the
    evbuffer by any means other than writing it to the network: the sendfile
@@ -599,7 +578,7 @@ typedef void (*evbuffer_file_segment_cleanup_cb)(
    file and sending it out via an evbuffer.
 
    This function avoids unnecessary data copies between userland and
-   kernel.  Where available, it uses sendfile.
+   kernel.  Where available, it uses sendfile or splice.
 
    The file descriptor must not be closed so long as any evbuffer is using
    this segment.

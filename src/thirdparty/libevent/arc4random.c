@@ -52,7 +52,7 @@
 #ifndef ARC4RANDOM_NO_INCLUDES
 #include "evconfig-private.h"
 #ifdef _WIN32
-#include <bcrypt.h>
+#include <wincrypt.h>
 #include <process.h>
 #include <winerror.h>
 #else
@@ -87,10 +87,6 @@ struct arc4_stream {
 #ifdef _WIN32
 #define getpid _getpid
 #define pid_t int
-#endif
-
-#ifndef O_RDONLY
-#define O_RDONLY _O_RDONLY
 #endif
 
 static int rs_initialized;
@@ -153,10 +149,20 @@ read_all(int fd, unsigned char *buf, size_t count)
 static int
 arc4_seed_win32(void)
 {
+	/* This is adapted from Tor's crypto_seed_rng() */
+	static int provider_set = 0;
+	static HCRYPTPROV provider;
 	unsigned char buf[ADD_ENTROPY];
 
-	if (BCryptGenRandom(NULL, buf, sizeof(buf),
-		BCRYPT_USE_SYSTEM_PREFERRED_RNG))
+	if (!provider_set) {
+		if (!CryptAcquireContext(&provider, NULL, NULL, PROV_RSA_FULL,
+		    CRYPT_VERIFYCONTEXT)) {
+			if (GetLastError() != (DWORD)NTE_BAD_KEYSET)
+				return -1;
+		}
+		provider_set = 1;
+	}
+	if (!CryptGenRandom(provider, sizeof(buf), buf))
 		return -1;
 	arc4_addrandom(buf, sizeof(buf));
 	evutil_memclear_(buf, sizeof(buf));
@@ -170,14 +176,25 @@ static int
 arc4_seed_getrandom(void)
 {
 	unsigned char buf[ADD_ENTROPY];
-	size_t len;
-	ssize_t n = 0;
+	size_t len, n;
+	unsigned i;
+	int any_set;
+
+	memset(buf, 0, sizeof(buf));
 
 	for (len = 0; len < sizeof(buf); len += n) {
-		n = getrandom(&buf[len], sizeof(buf) - len, 0);
-		if (n < 0)
+		n = sizeof(buf) - len;
+
+		if (0 == getrandom(&buf[len], n, 0))
 			return -1;
 	}
+	/* make sure that the buffer actually got set. */
+	for (i=0,any_set=0; i<sizeof(buf); ++i) {
+		any_set |= buf[i];
+	}
+	if (!any_set)
+		return -1;
+
 	arc4_addrandom(buf, sizeof(buf));
 	evutil_memclear_(buf, sizeof(buf));
 	return 0;

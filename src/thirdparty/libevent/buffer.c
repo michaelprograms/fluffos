@@ -34,6 +34,12 @@
 #include <io.h>
 #endif
 
+#ifdef EVENT__HAVE_VASPRINTF
+/* If we have vasprintf, we need to define _GNU_SOURCE before we include
+ * stdio.h.  This comes from evconfig-private.h.
+ */
+#endif
+
 #include <sys/types.h>
 
 #ifdef EVENT__HAVE_SYS_TIME_H
@@ -133,8 +139,6 @@
 	(ptr)->internal_.chain = NULL;		\
 	(ptr)->internal_.pos_in_chain = 0;	\
 } while (0)
-
-#define EVBUFFER_MAX_READ_DEFAULT	4096
 
 static void evbuffer_chain_align(struct evbuffer_chain *chain);
 static int evbuffer_chain_should_realign(struct evbuffer_chain *chain,
@@ -366,7 +370,6 @@ evbuffer_new(void)
 	LIST_INIT(&buffer->callbacks);
 	buffer->refcnt = 1;
 	buffer->last_with_datap = &buffer->first;
-	buffer->max_read = EVBUFFER_MAX_READ_DEFAULT;
 
 	return (buffer);
 }
@@ -588,26 +591,6 @@ evbuffer_free(struct evbuffer *buffer)
 	evbuffer_decref_and_unlock_(buffer);
 }
 
-int evbuffer_set_max_read(struct evbuffer *buf, size_t max)
-{
-	if (max > INT_MAX) {
-		return -1;
-	}
-
-	EVBUFFER_LOCK(buf);
-	buf->max_read = max;
-	EVBUFFER_UNLOCK(buf);
-	return 0;
-}
-size_t evbuffer_get_max_read(struct evbuffer *buf)
-{
-	size_t result;
-	EVBUFFER_LOCK(buf);
-	result = buf->max_read;
-	EVBUFFER_UNLOCK(buf);
-	return result;
-}
-
 void
 evbuffer_lock(struct evbuffer *buf)
 {
@@ -624,9 +607,13 @@ size_t
 evbuffer_get_length(const struct evbuffer *buffer)
 {
 	size_t result;
+
 	EVBUFFER_LOCK(buffer);
-	result = buffer->total_len;
+
+	result = (buffer->total_len);
+
 	EVBUFFER_UNLOCK(buffer);
+
 	return result;
 }
 
@@ -2219,6 +2206,8 @@ evbuffer_expand(struct evbuffer *buf, size_t datlen)
 #endif
 #define NUM_READ_IOVEC 4
 
+#define EVBUFFER_MAX_READ	4096
+
 /** Helper function to figure out which space to use for reading data into
     an evbuffer.  Internal use only.
 
@@ -2274,18 +2263,18 @@ static int
 get_n_bytes_readable_on_socket(evutil_socket_t fd)
 {
 #if defined(FIONREAD) && defined(_WIN32)
-	unsigned long lng = EVBUFFER_MAX_READ_DEFAULT;
+	unsigned long lng = EVBUFFER_MAX_READ;
 	if (ioctlsocket(fd, FIONREAD, &lng) < 0)
 		return -1;
 	/* Can overflow, but mostly harmlessly. XXXX */
 	return (int)lng;
 #elif defined(FIONREAD)
-	int n = EVBUFFER_MAX_READ_DEFAULT;
+	int n = EVBUFFER_MAX_READ;
 	if (ioctl(fd, FIONREAD, &n) < 0)
 		return -1;
 	return n;
 #else
-	return EVBUFFER_MAX_READ_DEFAULT;
+	return EVBUFFER_MAX_READ;
 #endif
 }
 
@@ -2313,8 +2302,8 @@ evbuffer_read(struct evbuffer *buf, evutil_socket_t fd, int howmuch)
 	}
 
 	n = get_n_bytes_readable_on_socket(fd);
-	if (n <= 0 || n > (int)buf->max_read)
-		n = (int)buf->max_read;
+	if (n <= 0 || n > EVBUFFER_MAX_READ)
+		n = EVBUFFER_MAX_READ;
 	if (howmuch < 0 || howmuch > n)
 		howmuch = n;
 
@@ -2507,6 +2496,7 @@ evbuffer_write_sendfile(struct evbuffer *buffer, evutil_socket_t dest_fd,
 
 	return (len);
 #elif defined(SENDFILE_IS_LINUX)
+	/* TODO(niels): implement splice */
 	res = sendfile(dest_fd, source_fd, &offset, chain->off);
 	if (res == -1 && EVUTIL_ERR_RW_RETRIABLE(errno)) {
 		/* if this is EAGAIN or EINTR return 0; otherwise, -1 */
@@ -3054,7 +3044,7 @@ evbuffer_file_segment_materialize(struct evbuffer_file_segment *seg)
 	const ev_off_t length = seg->length;
 	const ev_off_t offset = seg->file_offset;
 
-	if (seg->contents || seg->is_mapping)
+	if (seg->contents)
 		return 0; /* already materialized */
 
 #if defined(EVENT__HAVE_MMAP)
@@ -3213,10 +3203,12 @@ evbuffer_add_file_segment(struct evbuffer *buf,
 	if (buf->flags & EVBUFFER_FLAG_DRAINS_TO_FD) {
 		can_use_sendfile = 1;
 	} else {
-		if (evbuffer_file_segment_materialize(seg)<0) {
-			EVLOCK_UNLOCK(seg->lock, 0);
-			EVBUFFER_UNLOCK(buf);
-			return -1;
+		if (!seg->contents) {
+			if (evbuffer_file_segment_materialize(seg)<0) {
+				EVLOCK_UNLOCK(seg->lock, 0);
+				EVBUFFER_UNLOCK(buf);
+				return -1;
+			}
 		}
 	}
 	EVLOCK_UNLOCK(seg->lock, 0);
