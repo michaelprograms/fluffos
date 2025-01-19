@@ -10,7 +10,7 @@ title: system / shutdown
 
 ### SYNOPSIS
 
-    void shutdown( int how );
+    void shutdown( int how: 0 );
 
 ### DESCRIPTION
 

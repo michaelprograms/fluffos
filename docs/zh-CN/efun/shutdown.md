@@ -10,7 +10,7 @@ title: system / shutdown
 
 ### 语法
 
-    void shutdown( int how );
+    void shutdown( int how: 0 );
 
 ### 描述
 
