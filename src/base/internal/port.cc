@@ -2,6 +2,7 @@
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <ctime>
 
 // Returns a pseudo-random number in the range 0 .. n-1
 int64_t random_number(int64_t n) {
